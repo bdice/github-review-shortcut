@@ -13,7 +13,7 @@ the file and pressing Space.
 
 This is a customized fork of
 [`nbolton/github-review-shortcut`](https://github.com/nbolton/github-review-shortcut).
-It is not intended for upstream submission.
+Because the core keybinding changed from Escape to Space, the modifications are not intended for upstream submission.
 
 [Original discussion](https://github.com/orgs/community/discussions/10197)
 
