@@ -1,15 +1,24 @@
 # github-review-shortcut
 
-Mark file as "viewed" on GitHub PR UI when hovering and pressing 'Escape' key
+Toggle a file's **Viewed** state on GitHub's pull request UI by hovering over
+the file and pressing Space.
+
+- On an expanded file, Space marks it viewed, collapses it, and scrolls the next
+  rendered file to the top of the visible diff region.
+- On a collapsed file, Space marks it unviewed, expands it, and scrolls it to
+  the top of the visible diff region.
+- Space retains its normal behavior while typing in comments and other form
+  fields.
+- Both the redesigned and classic GitHub **Files changed** pages are supported.
+
+This is a customized fork of
+[`nbolton/github-review-shortcut`](https://github.com/nbolton/github-review-shortcut).
+It is not intended for upstream submission.
 
 [Original discussion](https://github.com/orgs/community/discussions/10197)
 
-Screencast by `dvdvdmt`:
-
-![225512737-f706088e-df8b-4e0d-aeb4-82af4f393692](https://github.com/user-attachments/assets/4045c00f-125f-406e-994c-c89e619b08a6)
-
 ## Instructions
 
-1. Install the [Tampermonkey](https://www.tampermonkey.net/) extension
-2. Go to the [Greasyfork page](https://greasyfork.org/en/scripts/543958-github-pr-review-keyboard-shortcut/code)
-3. Click 'Install this script'
+1. Install the [Tampermonkey](https://www.tampermonkey.net/) extension.
+2. In the Tampermonkey dashboard, create a new script.
+3. Replace the editor contents with [`main.js`](main.js), then save.
