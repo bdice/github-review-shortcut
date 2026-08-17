@@ -1,68 +1,182 @@
 // ==UserScript==
 // @name         GitHub PR review keyboard shortcut
-// @version      0.3
-// @description  Mark file as "viewed" on GitHub PR UI when hovering and pressing 'Escape' key
-// @match        https://github.com/*
-// @author       dvdvdmt, nbolton
-// @source       https://github.com/nbolton/github-review-shortcut
-// @namespace    https://github.com/nbolton/github-review-shortcut
+// @version      0.4.0
+// @description  Toggle the PR file under the pointer with Space and advance to the next file
+// @match        https://github.com/*/*/pull/*
+// @author       dvdvdmt, nbolton, bdice
+// @source       https://github.com/bdice/github-review-shortcut
+// @namespace    https://github.com/bdice/github-review-shortcut
 // @license      MIT
-// @downloadURL https://update.greasyfork.org/scripts/543958/GitHub%20PR%20review%20keyboard%20shortcut.user.js
-// @updateURL https://update.greasyfork.org/scripts/543958/GitHub%20PR%20review%20keyboard%20shortcut.meta.js
+// @downloadURL  https://raw.githubusercontent.com/bdice/github-review-shortcut/main/main.js
+// @updateURL    https://raw.githubusercontent.com/bdice/github-review-shortcut/main/main.js
+// @run-at       document-start
+// @grant        none
 // ==/UserScript==
 
-(function() {
+(() => {
     'use strict';
 
-    if (window.disposeMarkAsViewedByEscape) {
-        window.disposeMarkAsViewedByEscape();
-    }
+    const POSSIBLE_DIFF_SELECTOR = [
+        // Redesigned Files changed page. Checking for a Viewed control below
+        // prevents an unrelated region from being mistaken for a file diff.
+        'div[role="region"]',
+        // Classic Files changed page.
+        '.js-details-container[data-details-container-group="file"]',
+    ].join(',');
 
-    window.disposeMarkAsViewedByEscape = start();
+    const VIEWED_CONTROL_SELECTOR = [
+        'button[aria-label="Not Viewed" i]',
+        'button[aria-label="Viewed" i]',
+        'input.js-reviewed-checkbox[type="checkbox"]',
+        'input[type="checkbox"][data-ga-click*="viewed" i]',
+    ].join(',');
 
-    function start() {
-        window.addEventListener('keydown', handleKeyDown)
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }
+    let pointerPosition = null;
 
-    function markFileAsViewed() {
-        console.debug("Marking file as viewed");
+    // Remember the element under the pointer. This is more reliable than :hover
+    // while a keyboard event is being dispatched.
+    window.addEventListener('pointermove', (event) => {
+        pointerPosition = {x: event.clientX, y: event.clientY};
+    }, {capture: true, passive: true});
 
-        const fileElement = document.querySelector(`div[role="region"][id^="diff-"]:hover`);
-        if (!fileElement){
-            console.warn("No file element under cursor");
+    window.addEventListener('keydown', (event) => {
+        if (event.code !== 'Space' || event.repeat || isTypingTarget(event.target)) return;
+
+        const diff = findHoveredDiff();
+        if (!diff) {
+            console.debug('[github-review-shortcut] No file diff under the pointer');
             return;
         }
 
-        console.debug("File element found:", fileElement);
-        console.debug("Finding buttons")
-        const buttons = [...fileElement.querySelectorAll('button')];
-        if (buttons.length === 0) {
-            console.warn("No buttons found in file element");
+        const control = findViewedControl(diff);
+        if (!control) {
+            console.debug('[github-review-shortcut] No Viewed control was found');
             return;
         }
 
-        console.debug("Buttons found:", buttons);
+        // Space normally scrolls the page and may activate a focused control.
+        // This click is the only activation we want after recognizing a file.
+        event.preventDefault();
+        event.stopImmediatePropagation();
 
-        const checkboxes = buttons.filter(btn => btn.textContent.trim() === 'Viewed');
-        console.debug("Checkboxes found:", checkboxes);
-        if (checkboxes.length > 1) {
-            // Usually happens when the wrong DOM element is selected earlier on.
-            throw new Error("More than one checkbox found");
-        }
-        else if (checkboxes.length === 0) {
-            throw new Error("No checkbox found");
-        }
+        const wasHidden = isViewed(control);
+        const scrollTarget = wasHidden ? diff : findNextDiff(diff);
 
-        const checkbox = checkboxes[0];
-        console.debug("Clicking checkbox:", checkbox);
-        checkbox.click();
+        control.click();
+        scrollToTopAfterLayout(scrollTarget ?? diff);
+
+        console.debug(
+            wasHidden
+                ? '[github-review-shortcut] Unhid file'
+                : '[github-review-shortcut] Hid file and advanced',
+            diff
+        );
+    }, true); // Capture Space before GitHub's handlers can stop propagation.
+
+    function isTypingTarget(target) {
+        return target instanceof Element && Boolean(target.closest(
+            'input:not([type="checkbox"]), textarea, select, [contenteditable="true"], [role="textbox"]'
+        ));
     }
 
-    function handleKeyDown() {
-        if (event.key === 'Escape') {
-            markFileAsViewed();
+    function findHoveredDiff() {
+        if (pointerPosition) {
+            let element = document.elementFromPoint(
+                pointerPosition.x,
+                pointerPosition.y
+            );
+
+            while (element) {
+                if (element.matches(POSSIBLE_DIFF_SELECTOR) && hasViewedControl(element)) {
+                    return element;
+                }
+                element = element.parentElement;
+            }
         }
+
+        // Fallback for keyboard use before the first pointermove event.
+        return [...document.querySelectorAll(POSSIBLE_DIFF_SELECTOR)]
+            .find((element) => element.matches(':hover') && hasViewedControl(element)) ?? null;
     }
 
+    function hasViewedControl(diff) {
+        return Boolean(findViewedControl(diff));
+    }
+
+    function findViewedControl(diff) {
+        return [...diff.querySelectorAll(VIEWED_CONTROL_SELECTOR)]
+            .find((control) => findOwningDiff(control) === diff) ?? null;
+    }
+
+    function findOwningDiff(element) {
+        return element.closest(POSSIBLE_DIFF_SELECTOR);
+    }
+
+    function isViewed(control) {
+        if (control instanceof HTMLInputElement) return control.checked;
+
+        const pressed = control.getAttribute('aria-pressed');
+        if (pressed !== null) return pressed === 'true';
+
+        return control.getAttribute('aria-label')?.toLowerCase() === 'viewed';
+    }
+
+    function getRenderedDiffs() {
+        const diffs = [];
+        const seen = new Set();
+
+        for (const control of document.querySelectorAll(VIEWED_CONTROL_SELECTOR)) {
+            const diff = findOwningDiff(control);
+            if (diff && !seen.has(diff)) {
+                seen.add(diff);
+                diffs.push(diff);
+            }
+        }
+
+        return diffs;
+    }
+
+    function findNextDiff(currentDiff) {
+        const diffs = getRenderedDiffs();
+        const currentIndex = diffs.indexOf(currentDiff);
+        return currentIndex >= 0 ? diffs[currentIndex + 1] ?? null : null;
+    }
+
+    function scrollToTopAfterLayout(target) {
+        // Give GitHub two rendering frames to collapse or expand the diff first.
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (target.isConnected) {
+                target.scrollIntoView({block: 'start', behavior: 'auto'});
+
+                // scrollIntoView aligns with the viewport, underneath GitHub's
+                // sticky PR header. Move back by the actual covered height so
+                // the file starts at the top of the visible diff region.
+                const topInset = getTopViewportInset(target);
+                if (topInset > 0) window.scrollBy(0, -topInset);
+            }
+        }));
+    }
+
+    function getTopViewportInset(target) {
+        const targetRect = target.getBoundingClientRect();
+        const sampleX = Math.min(
+            Math.max(targetRect.left + Math.min(24, targetRect.width / 2), 1),
+            window.innerWidth - 2
+        );
+
+        return document.elementsFromPoint(sampleX, 1).reduce((inset, element) => {
+            const style = getComputedStyle(element);
+            if (style.position !== 'fixed' && style.position !== 'sticky') {
+                return inset;
+            }
+
+            const rect = element.getBoundingClientRect();
+            const coversViewportTop = rect.top <= 1 && rect.bottom > 0;
+            const isReasonableHeader = rect.height < window.innerHeight / 2;
+
+            return coversViewportTop && isReasonableHeader
+                ? Math.max(inset, rect.bottom)
+                : inset;
+        }, 0);
+    }
 })();
